@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -24,13 +24,12 @@
  * Arduino Mega with RAMPS v1.3 for Anycubic
  */
 
-#ifndef BOARD_NAME
-  #define BOARD_NAME "Anycubic RAMPS 1.3"
-#endif
+#define BOARD_NAME "Anycubic RAMPS 1.3"
 
 #define IS_RAMPS_EFB
-#define RAMPS_D9_PIN       44
-#define ORIG_E0_AUTO_FAN_PIN RAMPS_D9_PIN
+#define RAMPS_D9_PIN         44
+#define FAN2_PIN              9
+#define ORIG_E0_AUTO_FAN_PIN  9
 
 #include "pins_RAMPS_13.h"
 

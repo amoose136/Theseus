@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -33,27 +33,20 @@ void GcodeSuite::M226() {
               pin_state = parser.intval('S', -1); // required pin state - default is inverted
     const pin_t pin = GET_PIN_MAP_PIN(pin_number);
 
-    if (WITHIN(pin_state, -1, 1) && pin > -1 && !pin_is_protected(pin)) {
-
-      int target = LOW;
-
-      planner.synchronize();
-
-      pinMode(pin, INPUT);
-      switch (pin_state) {
-        case 1:
-          target = HIGH;
-          break;
-        case 0:
-          target = LOW;
-          break;
-        case -1:
-          target = !digitalRead(pin);
-          break;
+    if (WITHIN(pin_state, -1, 1) && pin > -1) {
+      if (pin_is_protected(pin))
+        protected_pin_err();
+      else {
+        int target = LOW;
+        planner.synchronize();
+        pinMode(pin, INPUT);
+        switch (pin_state) {
+          case 1: target = HIGH; break;
+          case 0: target = LOW; break;
+          case -1: target = !extDigitalRead(pin); break;
+        }
+        while (extDigitalRead(pin) != target) idle();
       }
-
-      while (digitalRead(pin) != target) idle();
-
     } // pin_state -1 0 1 && pin > -1
   } // parser.seen('P')
 }

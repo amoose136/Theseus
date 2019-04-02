@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -905,7 +905,7 @@ int SdBaseFile::peek() {
 // print uint8_t with width 2
 static void print2u(const uint8_t v) {
   if (v < 10) SERIAL_CHAR('0');
-  SERIAL_ECHO_F(v, DEC);
+  SERIAL_ECHO(int(v));
 }
 
 /**
@@ -1055,7 +1055,7 @@ int8_t SdBaseFile::readDir(dir_t* dir, char* longFilename) {
   if (!isDir() || (0x1F & curPosition_)) return -1;
 
   // If we have a longFilename buffer, mark it as invalid.
-  // If long filename is found it will be filled automatically.
+  // If a long filename is found it will be filled automatically.
   if (longFilename) longFilename[0] = '\0';
 
   while (1) {
@@ -1724,9 +1724,5 @@ int16_t SdBaseFile::write(const void* buf, uint16_t nbyte) {
   writeError = true;
   return -1;
 }
-
-#if ALLOW_DEPRECATED_FUNCTIONS
-  void (*SdBaseFile::oldDateTime_)(uint16_t &date, uint16_t &time) = 0;
-#endif
 
 #endif // SDSUPPORT

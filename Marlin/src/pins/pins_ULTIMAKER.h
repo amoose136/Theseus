@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -33,7 +33,7 @@
  */
 
 #if !defined(__AVR_ATmega1280__) && !defined(__AVR_ATmega2560__)
-  #error "Oops!  Make sure you have 'Arduino Mega' selected from the 'Tools -> Boards' menu."
+  #error "Oops! Select 'Arduino/Genuino Mega or Mega 2560' in 'Tools > Board.'"
 #endif
 
 #define DEFAULT_MACHINE_NAME    "Ultimaker"
@@ -43,7 +43,7 @@
 //
 // Servos
 //
-#define SERVO0_PIN         13   // UNTESTED
+#define SERVO0_PIN         11
 
 //
 // Limit Switches
@@ -99,7 +99,9 @@
 #define HEATER_1_PIN        3
 #define HEATER_BED_PIN      4
 
-#define FAN_PIN             7
+#ifndef FAN_PIN
+  #define FAN_PIN           7
+#endif
 
 //
 // Misc. Functions

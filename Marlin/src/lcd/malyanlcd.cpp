@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -45,8 +45,7 @@
 
 #if ENABLED(MALYAN_LCD)
 
-#include "../sd/cardreader.h"
-#include "../sd/SdFatConfig.h"
+#include "ultralcd.h"
 #include "../module/temperature.h"
 #include "../module/planner.h"
 #include "../module/stepper.h"
@@ -60,6 +59,13 @@
 
 #include "../Marlin.h"
 
+#if ENABLED(SDSUPPORT)
+  #include "../sd/cardreader.h"
+  #include "../sd/SdFatConfig.h"
+#else
+  #define LONG_FILENAME_LENGTH 0
+#endif
+
 // On the Malyan M200, this will be Serial1. On a RAMPS board,
 // it might not be.
 #define LCD_SERIAL Serial1
@@ -72,8 +78,11 @@
 // Track incoming command bytes from the LCD
 int inbound_count;
 
+// For sending print completion messages
+bool last_printing_status = false;
+
 // Everything written needs the high bit set.
-void write_to_lcd_P(const char * const message) {
+void write_to_lcd_P(PGM_P const message) {
   char encoded_message[MAX_CURLY_COMMAND];
   uint8_t message_length = MIN(strlen_P(message), sizeof(encoded_message));
 
@@ -101,22 +110,23 @@ void write_to_lcd(const char * const message) {
  * {C:P050}
  * Set temp for bed to 50
  *
+ * {C:S09} set feedrate to 90 %.
+ * {C:S12} set feedrate to 120 %.
+ *
  * the command portion begins after the :
  */
 void process_lcd_c_command(const char* command) {
   switch (command[0]) {
-    case 'T': {
-      // M104 S<temperature>
-      char cmd[20];
-      sprintf_P(cmd, PSTR("M104 S%s"), command + 1);
-      enqueue_and_echo_command_now(cmd);
+    case 'C': {
+      int raw_feedrate = atoi(command + 1);
+      feedrate_percentage = raw_feedrate * 10;
+      feedrate_percentage = constrain(feedrate_percentage, 10, 999);
     } break;
-
+    case 'T': {
+      thermalManager.setTargetHotend(atoi(command + 1), 0);
+    } break;
     case 'P': {
-      // M140 S<temperature>
-      char cmd[20];
-      sprintf_P(cmd, PSTR("M140 S%s"), command + 1);
-      enqueue_and_echo_command_now(cmd);
+      thermalManager.setTargetBed(atoi(command + 1));
     } break;
 
     default:
@@ -135,8 +145,6 @@ void process_lcd_c_command(const char* command) {
 void process_lcd_eb_command(const char* command) {
   char elapsed_buffer[10];
   duration_t elapsed;
-  bool has_days;
-  uint8_t len;
   switch (command[0]) {
     case '0': {
       elapsed = print_job_timer.duration();
@@ -147,9 +155,17 @@ void process_lcd_eb_command(const char* command) {
               PSTR("{T0:%03.0f/%03i}{T1:000/000}{TP:%03.0f/%03i}{TQ:%03i}{TT:%s}"),
               thermalManager.degHotend(0),
               thermalManager.degTargetHotend(0),
-              thermalManager.degBed(),
-              thermalManager.degTargetBed(),
-              card.percentDone(),
+              #if HAS_HEATED_BED
+                thermalManager.degBed(),
+                thermalManager.degTargetBed(),
+              #else
+                0, 0,
+              #endif
+              #if ENABLED(SDSUPPORT)
+                card.percentDone(),
+              #else
+                0,
+              #endif
               elapsed_buffer);
       write_to_lcd(message_buffer);
     } break;
@@ -226,51 +242,54 @@ void process_lcd_p_command(const char* command) {
 
   switch (command[0]) {
     case 'X':
-      // cancel print
-      write_to_lcd_P(PSTR("{SYS:CANCELING}"));
-      card.stopSDPrint(
-        #if SD_RESORT
-          true
-        #endif
-      );
-      clear_command_queue();
-      quickstop_stepper();
-      print_job_timer.stop();
-      thermalManager.disable_all_heaters();
-      #if FAN_COUNT > 0
-        for (uint8_t i = 0; i < FAN_COUNT; i++) fanSpeeds[i] = 0;
+      #if ENABLED(SDSUPPORT)
+        // cancel print
+        write_to_lcd_P(PSTR("{SYS:CANCELING}"));
+        last_printing_status = false;
+        card.stopSDPrint(
+          #if SD_RESORT
+            true
+          #endif
+        );
+        clear_command_queue();
+        quickstop_stepper();
+        print_job_timer.stop();
+        thermalManager.disable_all_heaters();
+        thermalManager.zero_fan_speeds();
+        wait_for_heatup = false;
+        write_to_lcd_P(PSTR("{SYS:STARTED}"));
       #endif
-      wait_for_heatup = false;
-      write_to_lcd_P(PSTR("{SYS:STARTED}"));
       break;
     case 'H':
       // Home all axis
       enqueue_and_echo_commands_now_P(PSTR("G28"));
       break;
     default: {
-      // Print file 000 - a three digit number indicating which
-      // file to print in the SD card. If it's a directory,
-      // then switch to the directory.
+      #if ENABLED(SDSUPPORT)
+        // Print file 000 - a three digit number indicating which
+        // file to print in the SD card. If it's a directory,
+        // then switch to the directory.
 
-      // Find the name of the file to print.
-      // It's needed to echo the PRINTFILE option.
-      // The {S:L} command should've ensured the SD card was mounted.
-      card.getfilename(atoi(command));
+        // Find the name of the file to print.
+        // It's needed to echo the PRINTFILE option.
+        // The {S:L} command should've ensured the SD card was mounted.
+        card.getfilename(atoi(command));
 
-      // There may be a difference in how V1 and V2 LCDs handle subdirectory
-      // prints. Investigate more. This matches the V1 motion controller actions
-      // but the V2 LCD switches to "print" mode on {SYS:DIR} response.
-      if (card.filenameIsDir) {
-        card.chdir(card.filename);
-        write_to_lcd_P(PSTR("{SYS:DIR}"));
-      }
-      else {
-        char message_buffer[MAX_CURLY_COMMAND];
-        sprintf_P(message_buffer, PSTR("{PRINTFILE:%s}"), card.filename);
-        write_to_lcd(message_buffer);
-        write_to_lcd_P(PSTR("{SYS:BUILD}"));
-        card.openAndPrintFile(card.filename);
-      }
+        // There may be a difference in how V1 and V2 LCDs handle subdirectory
+        // prints. Investigate more. This matches the V1 motion controller actions
+        // but the V2 LCD switches to "print" mode on {SYS:DIR} response.
+        if (card.flag.filenameIsDir) {
+          card.chdir(card.filename);
+          write_to_lcd_P(PSTR("{SYS:DIR}"));
+        }
+        else {
+          char message_buffer[MAX_CURLY_COMMAND];
+          sprintf_P(message_buffer, PSTR("{PRINTFILE:%s}"), card.longest_filename());
+          write_to_lcd(message_buffer);
+          write_to_lcd_P(PSTR("{SYS:BUILD}"));
+          card.openAndPrintFile(card.filename);
+        }
+      #endif
     } break; // default
   } // switch
 }
@@ -295,34 +314,40 @@ void process_lcd_s_command(const char* command) {
       char message_buffer[MAX_CURLY_COMMAND];
       sprintf_P(message_buffer, PSTR("{T0:%03.0f/%03i}{T1:000/000}{TP:%03.0f/%03i}"),
         thermalManager.degHotend(0), thermalManager.degTargetHotend(0),
-        thermalManager.degBed(), thermalManager.degTargetBed()
+        #if HAS_HEATED_BED
+          thermalManager.degBed(), thermalManager.degTargetBed()
+        #else
+          0, 0
+        #endif
       );
       write_to_lcd(message_buffer);
     } break;
 
     case 'H':
       // Home all axis
-      enqueue_and_echo_commands_P(PSTR("G28"));
+      enqueue_and_echo_command("G28");
       break;
 
     case 'L': {
-      if (!card.cardOK) card.initsd();
+      #if ENABLED(SDSUPPORT)
+        if (!card.isDetected()) card.initsd();
 
-      // A more efficient way to do this would be to
-      // implement a callback in the ls_SerialPrint code, but
-      // that requires changes to the core cardreader class that
-      // would not benefit the majority of users. Since one can't
-      // select a file for printing during a print, there's
-      // little reason not to do it this way.
-      char message_buffer[MAX_CURLY_COMMAND];
-      uint16_t file_count = card.get_num_Files();
-      for (uint16_t i = 0; i < file_count; i++) {
-        card.getfilename(i);
-        sprintf_P(message_buffer, card.filenameIsDir ? PSTR("{DIR:%s}") : PSTR("{FILE:%s}"), card.filename);
-        write_to_lcd(message_buffer);
-      }
+        // A more efficient way to do this would be to
+        // implement a callback in the ls_SerialPrint code, but
+        // that requires changes to the core cardreader class that
+        // would not benefit the majority of users. Since one can't
+        // select a file for printing during a print, there's
+        // little reason not to do it this way.
+        char message_buffer[MAX_CURLY_COMMAND];
+        uint16_t file_count = card.get_num_Files();
+        for (uint16_t i = 0; i < file_count; i++) {
+          card.getfilename(i);
+          sprintf_P(message_buffer, card.flag.filenameIsDir ? PSTR("{DIR:%s}") : PSTR("{FILE:%s}"), card.longest_filename());
+          write_to_lcd(message_buffer);
+        }
 
-      write_to_lcd_P(PSTR("{SYS:OK}"));
+        write_to_lcd_P(PSTR("{SYS:OK}"));
+      #endif
     } break;
 
     default:
@@ -374,7 +399,7 @@ void process_lcd_command(const char* command) {
 /**
  * UC means connected.
  * UD means disconnected
- * The stock firmware considers USB initialied as "connected."
+ * The stock firmware considers USB initialized as "connected."
  */
 void update_usb_status(const bool forceUpdate) {
   static bool last_usb_connected_status = false;
@@ -382,7 +407,7 @@ void update_usb_status(const bool forceUpdate) {
   // appears to use the usb discovery status.
   // This is more logical.
   if (last_usb_connected_status != Serial || forceUpdate) {
-    last_usb_connected_status =  Serial;
+    last_usb_connected_status = Serial;
     write_to_lcd_P(last_usb_connected_status ? PSTR("{R:UC}\r\n") : PSTR("{R:UD}\r\n"));
   }
 }
@@ -393,7 +418,7 @@ void update_usb_status(const bool forceUpdate) {
  * The optimize attribute fixes a register Compile
  * error for amtel.
  */
-void lcd_update() {
+void MarlinUI::update() {
   static char inbound_buffer[MAX_CURLY_COMMAND];
 
   // First report USB status.
@@ -411,15 +436,24 @@ void lcd_update() {
     }
   }
 
-  // If there's a print in progress, we need to emit the status as
-  // {TQ:<PERCENT>}
-  if (card.sdprinting) {
-    // We also need to send: T:-2538.0 E:0
-    // I have no idea what this means.
-    char message_buffer[10];
-    sprintf_P(message_buffer, PSTR("{TQ:%03i}"), card.percentDone());
-    write_to_lcd(message_buffer);
-  }
+  #if ENABLED(SDSUPPORT)
+    // The way last printing status works is simple:
+    // The UI needs to see at least one TQ which is not 100%
+    // and then when the print is complete, one which is.
+    static uint8_t last_percent_done = 100;
+
+    // If there was a print in progress, we need to emit the final
+    // print status as {TQ:100}. Reset last percent done so a new print will
+    // issue a percent of 0.
+    const uint8_t percent_done = IS_SD_PRINTING() ? card.percentDone() : last_printing_status ? 100 : 0;
+    if (percent_done != last_percent_done) {
+      char message_buffer[10];
+      sprintf_P(message_buffer, PSTR("{TQ:%03i}"), percent_done);
+      write_to_lcd(message_buffer);
+      last_percent_done = percent_done;
+      last_printing_status = IS_SD_PRINTING();
+    }
+  #endif
 }
 
 /**
@@ -428,7 +462,7 @@ void lcd_update() {
  * it and translate into gcode, which then gets injected into
  * the command queue where possible.
  */
-void lcd_init() {
+void MarlinUI::init() {
   inbound_count = 0;
   LCD_SERIAL.begin(500000);
 
@@ -446,10 +480,10 @@ void lcd_init() {
 /**
  * Set an alert.
  */
-void lcd_setalertstatusPGM(const char* message) {
-  char message_buffer[MAX_CURLY_COMMAND];
-  sprintf_P(message_buffer, PSTR("{E:%s}"), message);
-  write_to_lcd(message_buffer);
+void MarlinUI::set_alert_status_P(PGM_P const message) {
+  write_to_lcd_P(PSTR("{E:"));
+  write_to_lcd_P(message);
+  write_to_lcd_P("}");
 }
 
 #endif // MALYAN_LCD

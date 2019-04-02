@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -24,21 +24,28 @@
  * AZTEEG_X3_PRO (Arduino Mega) pin assignments
  */
 
+#ifndef __AVR_ATmega2560__
+  #error "Oops! Select 'Arduino/Genuino Mega or Mega 2560' in 'Tools > Board.'"
+#endif
+
 #if HOTENDS > 5 || E_STEPPERS > 5
   #error "Azteeg X3 Pro supports up to 5 hotends / E-steppers. Comment out this line to continue."
 #endif
 
-#if ENABLED(CASE_LIGHT_ENABLE) && !PIN_EXISTS(CASE_LIGHT)
-  #define CASE_LIGHT_PIN 44     // Define before RAMPS pins include
-#endif
-
 #define BOARD_NAME "Azteeg X3 Pro"
 
-#include "pins_RAMPS.h"
-
-#ifndef __AVR_ATmega2560__
-  #error "Oops! Make sure you have 'Arduino Mega 2560' selected from the 'Tools -> Boards' menu."
+//
+// RAMPS pins overrides
+//
+#if ENABLED(CASE_LIGHT_ENABLE) && !PIN_EXISTS(CASE_LIGHT)
+  #define CASE_LIGHT_PIN   44
 #endif
+
+#ifndef FAN_PIN
+  #define FAN_PIN           6
+#endif
+
+#include "pins_RAMPS.h"
 
 // DIGIPOT slave addresses
 #define DIGIPOT_I2C_ADDRESS_A 0x2C   // unshifted slave address for first DIGIPOT 0x2C (0x58 <- 0x2C << 1)
@@ -116,9 +123,6 @@
 #define HEATER_6_PIN        6
 #define HEATER_7_PIN       11
 
-#undef FAN_PIN
-#define FAN_PIN             6   // Part Cooling System
-
 #ifndef CONTROLLER_FAN_PIN
   #define CONTROLLER_FAN_PIN 4   // Pin used for the fan to cool motherboard (-1 to disable)
 #endif
@@ -135,7 +139,7 @@
 #undef BEEPER_PIN
 #define BEEPER_PIN         33
 
-#if ENABLED(VIKI2) || ENABLED(miniVIKI)
+#if ANY(VIKI2, miniVIKI)
   #undef SD_DETECT_PIN
   #define SD_DETECT_PIN    49   // For easy adapter board
   #undef BEEPER_PIN
@@ -148,7 +152,7 @@
 //
 // Misc. Functions
 //
-#if ENABLED(CASE_LIGHT_ENABLE)  && PIN_EXISTS(CASE_LIGHT) && defined(DOGLCD_A0) && DOGLCD_A0 == CASE_LIGHT_PIN
+#if ENABLED(CASE_LIGHT_ENABLE) && PIN_EXISTS(CASE_LIGHT) && defined(DOGLCD_A0) && DOGLCD_A0 == CASE_LIGHT_PIN
   #undef DOGLCD_A0              // Steal pin 44 for the case light; if you have a Viki2 and have connected it
   #define DOGLCD_A0        57   // following the Panucatt wiring diagram, you may need to tweak these pin assignments
                                 // as the wiring diagram uses pin 44 for DOGLCD_A0
@@ -162,7 +166,7 @@
 #undef SPINDLE_DIR_PIN
 
 #if ENABLED(SPINDLE_LASER_ENABLE)   // EXP2 header
-  #if ENABLED(VIKI2) || ENABLED(miniVIKI)
+  #if ANY(VIKI2, miniVIKI)
     #undef BTN_EN2
     #define BTN_EN2             31   // need 7 for the spindle speed PWM
   #endif
@@ -170,4 +174,3 @@
   #define SPINDLE_LASER_ENABLE_PIN 20   // Pin should have a pullup!
   #define SPINDLE_DIR_PIN          21
 #endif
-

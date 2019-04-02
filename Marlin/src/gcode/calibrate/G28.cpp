@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -39,11 +39,22 @@
   #include "../../feature/tmc_util.h"
 #endif
 
-#if HOMING_Z_WITH_PROBE
+#if HOMING_Z_WITH_PROBE || ENABLED(BLTOUCH)
   #include "../../module/probe.h"
 #endif
 
+#if ENABLED(BLTOUCH)
+  #include "../../feature/bltouch.h"
+#endif
+
 #include "../../lcd/ultralcd.h"
+
+#if HAS_DRIVER(L6470)                         // set L6470 absolute position registers to counts
+  #include "../../libs/L6470/L6470_Marlin.h"
+#endif
+
+#define DEBUG_OUT ENABLED(DEBUG_LEVELING_FEATURE)
+#include "../../core/debug_out.h"
 
 #if ENABLED(QUICK_HOME)
 
@@ -67,17 +78,32 @@
                 fr_mm_s = MIN(homing_feedrate(X_AXIS), homing_feedrate(Y_AXIS)) * SQRT(sq(mlratio) + 1.0);
 
     #if ENABLED(SENSORLESS_HOMING)
-      sensorless_homing_per_axis(X_AXIS);
-      sensorless_homing_per_axis(Y_AXIS);
+      sensorless_t stealth_states { false, false, false, false, false, false, false };
+      stealth_states.x = tmc_enable_stallguard(stepperX);
+      stealth_states.y = tmc_enable_stallguard(stepperY);
+      #if AXIS_HAS_STALLGUARD(X2)
+        stealth_states.x2 = tmc_enable_stallguard(stepperX2);
+      #endif
+      #if AXIS_HAS_STALLGUARD(Y2)
+        stealth_states.y2 = tmc_enable_stallguard(stepperY2);
+      #endif
     #endif
 
     do_blocking_move_to_xy(1.5 * mlx * x_axis_home_dir, 1.5 * mly * home_dir(Y_AXIS), fr_mm_s);
-    endstops.hit_on_purpose(); // clear endstop hit flags
+
+    endstops.validate_homing_move();
+
     current_position[X_AXIS] = current_position[Y_AXIS] = 0.0;
 
     #if ENABLED(SENSORLESS_HOMING)
-      sensorless_homing_per_axis(X_AXIS, false);
-      sensorless_homing_per_axis(Y_AXIS, false);
+      tmc_disable_stallguard(stepperX, stealth_states.x);
+      tmc_disable_stallguard(stepperY, stealth_states.y);
+      #if AXIS_HAS_STALLGUARD(X2)
+        tmc_disable_stallguard(stepperX2, stealth_states.x2);
+      #endif
+      #if AXIS_HAS_STALLGUARD(Y2)
+        tmc_disable_stallguard(stepperY2, stealth_states.y2);
+      #endif
     #endif
   }
 
@@ -88,18 +114,15 @@
   inline void home_z_safely() {
 
     // Disallow Z homing if X or Y are unknown
-    if (!axis_known_position[X_AXIS] || !axis_known_position[Y_AXIS]) {
+    if (!TEST(axis_known_position, X_AXIS) || !TEST(axis_known_position, Y_AXIS)) {
       LCD_MESSAGEPGM(MSG_ERR_Z_HOMING);
-      SERIAL_ECHO_START();
-      SERIAL_ECHOLNPGM(MSG_ERR_Z_HOMING);
+      SERIAL_ECHO_MSG(MSG_ERR_Z_HOMING);
       return;
     }
 
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPGM("Z_SAFE_HOMING >>>");
-    #endif
+    if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPGM("Z_SAFE_HOMING >>>");
 
-    SYNC_PLAN_POSITION_KINEMATIC();
+    sync_plan_position();
 
     /**
      * Move the Z probe (or just the nozzle) to the safe homing point
@@ -115,9 +138,7 @@
 
     if (position_is_reachable(destination[X_AXIS], destination[Y_AXIS])) {
 
-      #if ENABLED(DEBUG_LEVELING_FEATURE)
-        if (DEBUGGING(LEVELING)) DEBUG_POS("Z_SAFE_HOMING", destination);
-      #endif
+      if (DEBUGGING(LEVELING)) DEBUG_POS("Z_SAFE_HOMING", destination);
 
       // This causes the carriage on Dual X to unpark
       #if ENABLED(DUAL_X_CARRIAGE)
@@ -129,17 +150,14 @@
       #endif
 
       do_blocking_move_to_xy(destination[X_AXIS], destination[Y_AXIS]);
-      HOMEAXIS(Z);
+      homeaxis(Z_AXIS);
     }
     else {
       LCD_MESSAGEPGM(MSG_ZPROBE_OUT);
-      SERIAL_ECHO_START();
-      SERIAL_ECHOLNPGM(MSG_ZPROBE_OUT);
+      SERIAL_ECHO_MSG(MSG_ZPROBE_OUT);
     }
 
-    #if ENABLED(DEBUG_LEVELING_FEATURE)
-      if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPGM("<<< Z_SAFE_HOMING");
-    #endif
+    if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPGM("<<< Z_SAFE_HOMING");
   }
 
 #endif // Z_SAFE_HOMING
@@ -152,6 +170,8 @@
  *  None  Home to all axes with no parameters.
  *        With QUICK_HOME enabled XY will home together, then Z.
  *
+ *  O   Home only if position is unknown
+ *
  *  Rn  Raise by n mm/inches before homing
  *
  * Cartesian/SCARA parameters
@@ -163,23 +183,51 @@
  */
 void GcodeSuite::G28(const bool always_home_all) {
 
-  #if ENABLED(DEBUG_LEVELING_FEATURE)
-    if (DEBUGGING(LEVELING)) {
-      SERIAL_ECHOLNPGM(">>> G28");
-      log_machine_info();
+  if (DEBUGGING(LEVELING)) {
+    DEBUG_ECHOLNPGM(">>> G28");
+    log_machine_info();
+  }
+
+  #if ENABLED(DUAL_X_CARRIAGE)
+    bool IDEX_saved_duplication_state = extruder_duplication_enabled;
+    DualXMode IDEX_saved_mode = dual_x_carriage_mode;
+  #endif
+
+  #if ENABLED(MARLIN_DEV_MODE)
+    if (parser.seen('S')) {
+      LOOP_XYZ(a) set_axis_is_at_home((AxisEnum)a);
+      sync_plan_position();
+      SERIAL_ECHOLNPGM("Simulated Homing");
+      report_current_position();
+      if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPGM("<<< G28");
+      return;
     }
   #endif
+
+  if (parser.boolval('O')) {
+    if (
+      #if ENABLED(HOME_AFTER_DEACTIVATE)
+        all_axes_known()  // homing needed anytime steppers deactivate
+      #else
+        all_axes_homed()  // homing needed only if never homed
+      #endif
+    ) {
+      if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPGM("> homing not needed, skip\n<<< G28");
+      return;
+    }
+  }
 
   // Wait for planner moves to finish!
   planner.synchronize();
 
-  // Cancel the active G29 session
-  #if ENABLED(PROBE_MANUALLY)
-    g29_in_progress = false;
-  #endif
-
   // Disable the leveling matrix before homing
   #if HAS_LEVELING
+
+    // Cancel the active G29 session
+    #if ENABLED(PROBE_MANUALLY)
+      g29_in_progress = false;
+    #endif
+
     #if ENABLED(RESTORE_LEVELING_AFTER_G28)
       const bool leveling_was_active = planner.leveling_active;
     #endif
@@ -190,6 +238,10 @@ void GcodeSuite::G28(const bool always_home_all) {
     workspace_plane = PLANE_XY;
   #endif
 
+  #if ENABLED(BLTOUCH)
+    bltouch.init();
+  #endif
+
   // Always home with tool 0 active
   #if HOTENDS > 1
     #if DISABLED(DELTA) || ENABLED(DELTA_HOME_TO_SAFE_ZONE)
@@ -198,14 +250,12 @@ void GcodeSuite::G28(const bool always_home_all) {
     tool_change(0, 0, true);
   #endif
 
-  #if ENABLED(DUAL_X_CARRIAGE) || ENABLED(DUAL_NOZZLE_DUPLICATION_MODE)
+  #if HAS_DUPLICATION_MODE
     extruder_duplication_enabled = false;
   #endif
 
   setup_for_endstop_or_probe_move();
-  #if ENABLED(DEBUG_LEVELING_FEATURE)
-    if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPGM("> endstops.enable(true)");
-  #endif
+
   endstops.enable(true); // Enable endstops for next homing move
 
   #if ENABLED(DELTA)
@@ -224,13 +274,13 @@ void GcodeSuite::G28(const bool always_home_all) {
 
     #if Z_HOME_DIR > 0  // If homing away from BED do Z first
 
-      if (home_all || homeZ) HOMEAXIS(Z);
+      if (home_all || homeZ) homeaxis(Z_AXIS);
 
     #endif
 
     const float z_homing_height = (
       #if ENABLED(UNKNOWN_Z_NO_RAISE)
-        !axis_known_position[Z_AXIS] ? 0 :
+        !TEST(axis_known_position, Z_AXIS) ? 0 :
       #endif
           (parser.seenval('R') ? parser.value_linear_units() : Z_HOMING_HEIGHT)
     );
@@ -239,12 +289,7 @@ void GcodeSuite::G28(const bool always_home_all) {
       // Raise Z before homing any other axes and z is not already high enough (never lower z)
       destination[Z_AXIS] = z_homing_height;
       if (destination[Z_AXIS] > current_position[Z_AXIS]) {
-
-        #if ENABLED(DEBUG_LEVELING_FEATURE)
-          if (DEBUGGING(LEVELING))
-            SERIAL_ECHOLNPAIR("Raise Z (before homing) to ", destination[Z_AXIS]);
-        #endif
-
+        if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPAIR("Raise Z (before homing) to ", destination[Z_AXIS]);
         do_blocking_move_to_z(destination[Z_AXIS]);
       }
     }
@@ -262,7 +307,7 @@ void GcodeSuite::G28(const bool always_home_all) {
         #if ENABLED(CODEPENDENT_XY_HOMING)
           || homeX
         #endif
-      ) HOMEAXIS(Y);
+      ) homeaxis(Y_AXIS);
 
     #endif
 
@@ -277,14 +322,14 @@ void GcodeSuite::G28(const bool always_home_all) {
 
         // Always home the 2nd (right) extruder first
         active_extruder = 1;
-        HOMEAXIS(X);
+        homeaxis(X_AXIS);
 
         // Remember this extruder's position for later tool change
         inactive_extruder_x_pos = current_position[X_AXIS];
 
         // Home the 1st (left) extruder
         active_extruder = 0;
-        HOMEAXIS(X);
+        homeaxis(X_AXIS);
 
         // Consider the active extruder to be parked
         COPY(raised_parked_position, current_position);
@@ -293,14 +338,14 @@ void GcodeSuite::G28(const bool always_home_all) {
 
       #else
 
-        HOMEAXIS(X);
+        homeaxis(X_AXIS);
 
       #endif
     }
 
     // Home Y (after X)
     #if DISABLED(HOME_Y_BEFORE_X)
-      if (home_all || homeY) HOMEAXIS(Y);
+      if (home_all || homeY) homeaxis(Y_AXIS);
     #endif
 
     // Home Z last if homing towards the bed
@@ -309,7 +354,7 @@ void GcodeSuite::G28(const bool always_home_all) {
         #if ENABLED(Z_SAFE_HOMING)
           home_z_safely();
         #else
-          HOMEAXIS(Z);
+          homeaxis(Z_AXIS);
         #endif
 
         #if HOMING_Z_WITH_PROBE && defined(Z_AFTER_PROBING)
@@ -319,18 +364,52 @@ void GcodeSuite::G28(const bool always_home_all) {
       } // home_all || homeZ
     #endif // Z_HOME_DIR < 0
 
-    SYNC_PLAN_POSITION_KINEMATIC();
+    sync_plan_position();
 
   #endif // !DELTA (G28)
 
+  /**
+   * Preserve DXC mode across a G28 for IDEX printers in DXC_DUPLICATION_MODE.
+   * This is important because it lets a user use the LCD Panel to set an IDEX Duplication mode, and
+   * then print a standard GCode file that contains a single print that does a G28 and has no other
+   * IDEX specific commands in it.
+   */
+  #if ENABLED(DUAL_X_CARRIAGE)
+
+    if (dxc_is_duplicating()) {
+
+      // Always home the 2nd (right) extruder first
+      active_extruder = 1;
+      homeaxis(X_AXIS);
+
+      // Remember this extruder's position for later tool change
+      inactive_extruder_x_pos = current_position[X_AXIS];
+
+      // Home the 1st (left) extruder
+      active_extruder = 0;
+      homeaxis(X_AXIS);
+
+      // Consider the active extruder to be parked
+      COPY(raised_parked_position, current_position);
+      delayed_move_time = 0;
+      active_extruder_parked = true;
+      extruder_duplication_enabled = IDEX_saved_duplication_state;
+      extruder_duplication_enabled = false;
+
+      dual_x_carriage_mode         = IDEX_saved_mode;
+      stepper.set_directions();
+    }
+
+  #endif // DUAL_X_CARRIAGE
+
   endstops.not_homing();
 
-  #if ENABLED(DELTA) && ENABLED(DELTA_HOME_TO_SAFE_ZONE)
+  #if BOTH(DELTA, DELTA_HOME_TO_SAFE_ZONE)
     // move to a height where we can use the full xy-area
     do_blocking_move_to_z(delta_clip_start_height);
   #endif
 
-  #if ENABLED(RESTORE_LEVELING_AFTER_G28)
+  #if HAS_LEVELING && ENABLED(RESTORE_LEVELING_AFTER_G28)
     set_bed_leveling_enabled(leveling_was_active);
   #endif
 
@@ -338,7 +417,7 @@ void GcodeSuite::G28(const bool always_home_all) {
 
   // Restore the active tool after homing
   #if HOTENDS > 1 && (DISABLED(DELTA) || ENABLED(DELTA_HOME_TO_SAFE_ZONE))
-    #if ENABLED(PARKING_EXTRUDER)
+    #if ENABLED(PARKING_EXTRUDER) || ENABLED(DUAL_X_CARRIAGE)
       #define NO_FETCH false // fetch the previous toolhead
     #else
       #define NO_FETCH true
@@ -346,7 +425,7 @@ void GcodeSuite::G28(const bool always_home_all) {
     tool_change(old_tool_index, 0, NO_FETCH);
   #endif
 
-  lcd_refresh();
+  ui.refresh();
 
   report_current_position();
   #if ENABLED(NANODLP_Z_SYNC)
@@ -359,7 +438,13 @@ void GcodeSuite::G28(const bool always_home_all) {
       SERIAL_ECHOLNPGM(MSG_Z_MOVE_COMP);
   #endif
 
-  #if ENABLED(DEBUG_LEVELING_FEATURE)
-    if (DEBUGGING(LEVELING)) SERIAL_ECHOLNPGM("<<< G28");
+  if (DEBUGGING(LEVELING)) DEBUG_ECHOLNPGM("<<< G28");
+
+  #if HAS_DRIVER(L6470)
+    // Set L6470 absolute position registers to counts
+    for (uint8_t j = 1; j <= L6470::chain[0]; j++) {
+      const uint8_t cv = L6470::chain[j];
+      L6470.set_param(cv, L6470_ABS_POS, stepper.position((AxisEnum)L6470.axis_xref[cv]));
+    }
   #endif
 }

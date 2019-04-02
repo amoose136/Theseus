@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -42,8 +42,8 @@
  *
  * write()               - Set the servo angle in degrees. (Invalid angles —over MIN_PULSE_WIDTH— are treated as µs.)
  * writeMicroseconds()   - Set the servo pulse width in microseconds.
- * move(pin, angle)      - Sequence of attach(pin), write(angle), delay(SERVO_DELAY).
- *                         With DEACTIVATE_SERVOS_AFTER_MOVE it detaches after SERVO_DELAY.
+ * move(pin, angle)      - Sequence of attach(pin), write(angle), safe_delay(servo_delay[servoIndex]).
+ *                         With DEACTIVATE_SERVOS_AFTER_MOVE it detaches after servo_delay[servoIndex].
  * read()                - Get the last-written servo pulse width as an angle between 0 and 180.
  * readMicroseconds()    - Get the last-written servo pulse width in microseconds.
  * attached()            - Return true if a servo is attached.
@@ -60,8 +60,8 @@
 #include <avr/interrupt.h>
 #include <Arduino.h>
 
-#include "../servo.h"
-#include "../servo_private.h"
+#include "../shared/servo.h"
+#include "../shared/servo_private.h"
 
 static volatile int8_t Channel[_Nbr_16timers];              // counter for the servo being pulsed for each timer (or -1 if refresh interval)
 
@@ -73,14 +73,14 @@ static inline void handle_interrupts(timer16_Sequence_t timer, volatile uint16_t
     *TCNTn = 0; // channel set to -1 indicated that refresh interval completed so reset the timer
   else {
     if (SERVO_INDEX(timer, Channel[timer]) < ServoCount && SERVO(timer, Channel[timer]).Pin.isActive)
-      digitalWrite(SERVO(timer, Channel[timer]).Pin.nbr, LOW); // pulse this channel low if activated
+      extDigitalWrite(SERVO(timer, Channel[timer]).Pin.nbr, LOW); // pulse this channel low if activated
   }
 
   Channel[timer]++;    // increment to the next channel
   if (SERVO_INDEX(timer, Channel[timer]) < ServoCount && Channel[timer] < SERVOS_PER_TIMER) {
     *OCRnA = *TCNTn + SERVO(timer, Channel[timer]).ticks;
     if (SERVO(timer, Channel[timer]).Pin.isActive)    // check if activated
-      digitalWrite(SERVO(timer, Channel[timer]).Pin.nbr, HIGH); // it's an active channel so pulse it high
+      extDigitalWrite(SERVO(timer, Channel[timer]).Pin.nbr, HIGH); // it's an active channel so pulse it high
   }
   else {
     // finished all channels so wait for the refresh period to expire before starting over

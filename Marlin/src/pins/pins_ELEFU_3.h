@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -25,7 +25,7 @@
  */
 
 #ifndef __AVR_ATmega2560__
-  #error "Oops!  Make sure you have 'Arduino Mega' selected from the 'Tools -> Boards' menu."
+  #error "Oops! Select 'Arduino/Genuino Mega or Mega 2560' in 'Tools > Board.'"
 #endif
 
 #define BOARD_NAME "Elefu Ra v3"
@@ -90,7 +90,9 @@
 #define HEATER_2_PIN       17   // 12V PWM3
 #define HEATER_BED_PIN     44   // DOUBLE 12V PWM
 
-#define FAN_PIN            16   // 5V PWM
+#ifndef FAN_PIN
+  #define FAN_PIN          16   // 5V PWM
+#endif
 
 //
 // Misc. Functions

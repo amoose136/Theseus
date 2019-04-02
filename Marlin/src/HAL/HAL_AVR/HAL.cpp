@@ -1,7 +1,7 @@
 /* **************************************************************************
 
  Marlin 3D Printer Firmware
- Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
 
  Copyright (c) 2016 Bob Cousins bobcousins42@googlemail.com
 
@@ -20,13 +20,6 @@
 
 ****************************************************************************/
 
-/**
- * Description: HAL for AVR
- *
- * For __AVR__
- */
-
-
 #ifdef __AVR__
 
 // --------------------------------------------------------------------------
@@ -34,6 +27,7 @@
 // --------------------------------------------------------------------------
 
 #include "../../inc/MarlinConfig.h"
+#include "HAL.h"
 
 // --------------------------------------------------------------------------
 // Externals
@@ -74,9 +68,11 @@
 // --------------------------------------------------------------------------
 
 #if ENABLED(SDSUPPORT)
+
   #include "../../sd/SdFatUtil.h"
   int freeMemory() { return SdFatUtil::FreeRam(); }
-#else
+
+#else // !SDSUPPORT
 
 extern "C" {
   extern char __bss_end;
@@ -93,7 +89,6 @@ extern "C" {
   }
 }
 
-#endif //!SDSUPPORT
+#endif // !SDSUPPORT
 
-#endif
-
+#endif // __AVR__

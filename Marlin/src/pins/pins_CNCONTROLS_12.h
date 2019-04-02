@@ -3,10 +3,10 @@
  */
 
 #if !defined(__AVR_ATmega1280__) && !defined(__AVR_ATmega2560__)
-  #error Oops!  Make sure you have 'Arduino Mega' selected from the 'Tools -> Boards' menu.
+  #error "Oops! Select 'Arduino/Genuino Mega or Mega 2560' in 'Tools > Board.'"
 #endif
 
-#define BOARD_NAME            "CN Controls V12"
+#define BOARD_NAME "CN Controls V12"
 
 //
 // Limit Switches
@@ -65,7 +65,9 @@
 #define HEATER_3_PIN        3
 #define HEATER_BED_PIN     24
 
-#define FAN_PIN             5   // 5 is PWMtool3 -> 7 is common PWM pin for all tools
+#ifndef FAN_PIN
+  #define FAN_PIN           5   // 5 is PWMtool3 -> 7 is common PWM pin for all tools
+#endif
 
 #define ORIG_E0_AUTO_FAN_PIN 7
 #define ORIG_E1_AUTO_FAN_PIN 7

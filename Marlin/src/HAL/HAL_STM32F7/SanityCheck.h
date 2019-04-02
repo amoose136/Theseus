@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016, 2017 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -53,6 +53,8 @@
       #error "SPINDLE_LASER_PWM_PIN is used by E3_AUTO_FAN_PIN."
     #elif PIN_EXISTS(E4_AUTO_FAN) && SPINDLE_LASER_PWM_PIN == E4_AUTO_FAN_PIN
       #error "SPINDLE_LASER_PWM_PIN is used by E4_AUTO_FAN_PIN."
+    #elif PIN_EXISTS(E5_AUTO_FAN) && SPINDLE_LASER_PWM_PIN == E5_AUTO_FAN_PIN
+      #error "SPINDLE_LASER_PWM_PIN is used by E5_AUTO_FAN_PIN."
     #elif PIN_EXISTS(FAN) && SPINDLE_LASER_PWM_PIN == FAN_PIN
       #error "SPINDLE_LASER_PWM_PIN is used FAN_PIN."
     #elif PIN_EXISTS(FAN1) && SPINDLE_LASER_PWM_PIN == FAN1_PIN
@@ -67,4 +69,8 @@
 
 #if ENABLED(EMERGENCY_PARSER)
   #error "EMERGENCY_PARSER is not yet implemented for STM32F7. Disable EMERGENCY_PARSER to continue."
+#endif
+
+#if ENABLED(FAST_PWM_FAN)
+  #error "FAST_PWM_FAN is not yet implemented for this platform."
 #endif

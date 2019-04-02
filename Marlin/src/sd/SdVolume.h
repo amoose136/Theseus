@@ -1,6 +1,6 @@
 /**
  * Marlin 3D Printer Firmware
- * Copyright (C) 2016 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
+ * Copyright (C) 2019 MarlinFirmware [https://github.com/MarlinFirmware/Marlin]
  *
  * Based on Sprinter and grbl.
  * Copyright (C) 2011 Camiel Gubbels / Erik van der Zalm
@@ -19,6 +19,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
+#pragma once
 
 /**
  * \file
@@ -31,13 +32,17 @@
  *
  * This file is part of the Arduino Sd2Card Library
  */
-#ifndef _SDVOLUME_H_
-#define _SDVOLUME_H_
+
+#if ENABLED(USB_FLASH_DRIVE_SUPPORT)
+  #include "usb_flashdrive/Sd2Card_FlashDrive.h"
+#elif ENABLED(SDIO_SUPPORT)
+  #include "Sd2Card_sdio.h"
+#else
+  #include "Sd2Card.h"
+#endif
 
 #include "SdFatConfig.h"
-#include "Sd2Card.h"
 #include "SdFatStructs.h"
-
 #include <stdint.h>
 
 //==============================================================================
@@ -190,24 +195,4 @@ class SdVolume {
   }
   bool readBlock(uint32_t block, uint8_t* dst) { return sdCard_->readBlock(block, dst); }
   bool writeBlock(uint32_t block, const uint8_t* dst) { return sdCard_->writeBlock(block, dst); }
-
-  // Deprecated functions
-  #if ALLOW_DEPRECATED_FUNCTIONS
-    public:
-      /**
-       * \deprecated Use: bool SdVolume::init(Sd2Card* dev);
-       * \param[in] dev The SD card where the volume is located.
-       * \return true for success or false for failure.
-       */
-      bool init(Sd2Card& dev) { return init(&dev); }
-      /**
-       * \deprecated Use: bool SdVolume::init(Sd2Card* dev, uint8_t vol);
-       * \param[in] dev The SD card where the volume is located.
-       * \param[in] part The partition to be used.
-       * \return true for success or false for failure.
-       */
-      bool init(Sd2Card& dev, uint8_t part) { return init(&dev, part); }
-  #endif  // ALLOW_DEPRECATED_FUNCTIONS
 };
-
-#endif // _SDVOLUME_H_
